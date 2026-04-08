@@ -1,0 +1,326 @@
+<!-- Developed by Danie Brits -->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Web Scanner Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    /* (styles unchanged for brevity — same as your original) */
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #f4f6f9;
+      padding: 30px;
+      color: #333;
+    }
+    h1 {
+      margin-bottom: 20px;
+    }
+    .card {
+      background: white;
+      border-radius: 16px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 16px;
+    }
+    .stat {
+      background: #ecf3fd;
+      border-radius: 12px;
+      padding: 16px;
+      text-align: center;
+    }
+    .stat h2 {
+      margin: 0;
+      font-size: 32px;
+      color: #2e77d0;
+    }
+    .stat p {
+      margin: 4px 0 0;
+      font-size: 14px;
+    }
+    .error {
+      background: #fff3f3;
+      color: #a94442;
+      padding: 10px;
+      border-left: 5px solid #e74c3c;
+      border-radius: 8px;
+      margin-bottom: 10px;
+    }
+    summary {
+      cursor: pointer;
+      font-weight: bold;
+    }
+    pre {
+      background: #f0f0f0;
+      padding: 15px;
+      border-radius: 8px;
+      overflow-x: auto;
+      max-height: 400px;
+    }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      margin-bottom: 20px;
+      align-items: center;
+    }
+    .controls input, .controls button {
+      padding: 8px 10px;
+      font-size: 16px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+    }
+    .controls label {
+      font-weight: bold;
+    }
+    .controls button {
+      background-color: #2e77d0;
+      color: white;
+      border: none;
+      cursor: pointer;
+    }
+    .controls button:hover {
+      background-color: #1c5fa3;
+    }
+    button:disabled {
+      background-color: #ccc;
+      cursor: not-allowed;
+      opacity: 0.7;
+    }
+    .status-dot {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: #bbb;
+      transition: background 0.3s ease;
+    }
+    .status-dot.active {
+      background: #4caf50;
+      animation: pulse 1.2s infinite ease-in-out;
+    }
+    .status-dot.inactive {
+      background: #e74c3c;
+    }
+    @keyframes pulse {
+      0% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.3); opacity: 0.6; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+    #errorLogsContainer {
+      background: #fff;
+      border-radius: 8px;
+      padding: 10px;
+      font-family: monospace;
+      font-size: 13px;
+      white-space: pre-wrap;
+      max-height: 300px;
+      overflow-y: auto;
+      margin-top: 15px;
+      display: none;
+      box-shadow: inset 0 0 5px rgba(0,0,0,0.1);
+    }
+  </style>
+</head>
+<body>
+
+  <h1>PHP_Scanner</h1>
+  <div class="card controls">
+    <label>Refresh (seconds):
+      <input type="number" id="refreshRate" value="1" min="1" max="300">
+    </label>
+
+    <label>Requests per Interval:
+      <input type="number" id="requestCount" value="1" min="1" max="10">
+    </label>
+
+    <button onclick="startScanning()">Start Scan</button>
+    <button onclick="stopScanning()">Stop</button>
+    <button onclick="window.location.href='../'" style="display:block; float:right;">Go to Index search</button>
+
+    <div style="margin-left:auto; display: flex; align-items: center; gap: 8px;">
+      <div id="status-indicator" class="status-dot inactive"></div>
+      <span id="status">Idle</span>
+    </div>
+
+    <div style="margin-top: 10px;" id="countdownText"></div>
+  </div>
+
+  <div class="card">
+    <p><strong>Last Scanned URL:</strong> <span id="url">Waiting...</span></p>
+    <p id="timestamp">Last updated: --</p>
+  </div>
+
+  <div class="grid">
+    <div class="stat"><h2 id="words">--</h2><p>Words</p></div>
+    <div class="stat"><h2 id="images">--</h2><p>Images</p></div>
+    <div class="stat"><h2 id="videos">--</h2><p>Videos</p></div>
+    <div class="stat"><h2 id="links">--</h2><p>Links scanned: <small id="persent"></small>%</p></div>
+  </div>
+
+
+  <div class="card">
+    <details>
+      <summary>Log Info</summary>
+      <pre id="info">--</pre>
+    </details>
+  </div>
+
+  <div class="card">
+    <button id="loadErrorsBtn">View Logs</button>
+    <div id="errorLogsContainer"></div>
+  </div>
+
+  <script>
+    let intervalId = null;
+    let countdownTimer = null;
+    let countdownSeconds = 0;
+    let requestIteration = 0;
+
+    const startBtn = document.querySelector('button[onclick="startScanning()"]');
+    const stopBtn = document.querySelector('button[onclick="stopScanning()"]');
+
+    async function sendScanRequest(i) {
+      try {
+        // Step 1: Get a valid domain
+        const domainRes = await fetch('get_domains.php');
+const domainData = await domainRes.json();
+
+const formData = new URLSearchParams();
+formData.append('linkId', domainData[0]);
+formData.append('protocol', domainData[1]);
+formData.append('url', domainData[2]);
+formData.append('index', domainData[3]);
+formData.append('status', domainData[5]);
+formData.append('query','run');
+
+const res = await fetch('backend_scanner.php', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+  body: formData
+});
+
+        const data = await res.json();
+
+        if (data.success && i === 0) {
+          updateUI(data);
+        }
+        return true;
+      } catch (err) {
+        console.error(`Request ${i + 1} failed:`, err);
+        return false;
+      }
+    }
+
+    function updateUI(data) {
+      const now = new Date();
+	  console.log(data);
+      document.getElementById('timestamp').textContent = 'Last updated: ' + now.toLocaleTimeString();
+      document.getElementById('url').textContent = data.url || '(none)';
+      document.getElementById('words').textContent = data.words ?? 0;
+      document.getElementById('images').textContent = data.images ?? 0;
+      document.getElementById('videos').textContent = data.videos ?? 0;
+      document.getElementById('links').textContent = data.links ?? 0;
+      document.getElementById('persent').textContent = data.persent ?? 0;
+      document.getElementById('info').textContent = data.info || 'No log info.';
+    }
+
+    function runMultiScan() {
+      const count = parseInt(document.getElementById("requestCount").value);
+      const promises = [];
+
+      document.getElementById("status").textContent = `Scanning...`;
+      document.getElementById("status-indicator").classList.remove("inactive");
+      document.getElementById("status-indicator").classList.add("active");
+
+      for (let i = 0; i < count; i++) {
+        promises.push(sendScanRequest(i));
+      }
+
+      Promise.all(promises).then(results => {
+        const successCount = results.filter(r => r).length;
+        console.log(`Batch ${++requestIteration} complete. ${successCount}/${count} succeeded.`);
+      });
+    }
+
+    function startScanning() {
+      stopScanning();
+      requestIteration = 0;
+      updateButtonStates(true);
+
+      runMultiScan();
+
+      const delay = parseInt(document.getElementById("refreshRate").value);
+      countdownSeconds = delay;
+      updateCountdownUI();
+
+      countdownTimer = setInterval(() => {
+        countdownSeconds--;
+        if (countdownSeconds <= 0) {
+          countdownSeconds = delay;
+          runMultiScan();
+        }
+        updateCountdownUI();
+      }, 1000);
+    }
+
+    function stopScanning() {
+      if (intervalId) clearInterval(intervalId);
+      if (countdownTimer) clearInterval(countdownTimer);
+
+      intervalId = null;
+      countdownTimer = null;
+      document.getElementById("countdownText").textContent = '';
+
+      document.getElementById("status").textContent = 'Stopped';
+      document.getElementById("status-indicator").classList.remove("active");
+      document.getElementById("status-indicator").classList.add("inactive");
+
+      updateButtonStates(false);
+    }
+
+    function updateCountdownUI() {
+      document.getElementById("countdownText").textContent = 
+        `Next scan in: ${countdownSeconds}s`;
+    }
+
+    function updateButtonStates(isRunning) {
+      startBtn.disabled = isRunning;
+      stopBtn.disabled = !isRunning;
+    }
+
+    document.getElementById('loadErrorsBtn').addEventListener('click', () => {
+      const container = document.getElementById('errorLogsContainer');
+      container.style.display = 'block';
+      container.textContent = 'Loading error logs...';
+
+      fetch('fetch_error_logs.php')
+        .then(res => res.json())
+        .then(data => {
+          if (data.success && data.logs.length > 0) {
+            container.textContent = '';
+            data.logs.forEach(log => {
+              const time = new Date(log.timestamp).toLocaleString();
+              const entry = `[${time}] (${log.level}) ${log.message}\n`;
+              container.textContent += entry;
+            });
+          } else {
+            container.textContent = 'No error logs found.';
+          }
+        })
+        .catch(err => {
+          container.textContent = 'Failed to load error logs.';
+          console.error('Error fetching logs:', err);
+        });
+    });
+
+    updateButtonStates(false);
+  </script>
+
+</body>
+</html>
